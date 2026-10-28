@@ -98,11 +98,13 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
   <div class="cuads" id="cuads"></div>
   <label>Punto de la ciudad</label>
   <div class="puntos" id="puntos"></div>
-  <label>Tipos de elemento a contar (independientes)</label>
-  <div class="tipos" id="tipos"></div>
+  <div class="hide">
+    <label>Tipos de elemento a contar (independientes)</label>
+    <div class="tipos" id="tipos"></div>
+  </div>
   <div class="row2">
-    <div><label>Día de la captura</label><input type="date" id="fecha"></div>
-    <div><label>Brigadista (opcional)</label><input type="text" id="aforador" placeholder="Nombre"></div>
+    <div><label>Día de la captura (hoy)</label><input type="date" id="fecha" disabled></div>
+    <div><label>Aforador (opcional)</label><input type="text" id="aforador" placeholder="Nombre"></div>
   </div>
   <div class="bar"><button class="btn verde" id="go" disabled>Iniciar conteo</button></div>
   <div class="bar"><button class="btn gris" id="exp1">⬇ Exportar datos</button></div>
@@ -170,12 +172,13 @@ const BOTONES = [
 ];
 const sel = JSON.parse(localStorage.getItem("sel") || "{}");
 const TODOS = BOTONES.filter(b=>b.k).map(b=>b.k);
-if(!Array.isArray(sel.tipos) || !sel.tipos.length) sel.tipos = [...TODOS];
+sel.tipos = [...TODOS]; // todos los tipos siempre activos
+const hoy = () => new Date().toLocaleDateString("sv");
 let counts = {}, history = [];
 let pending = JSON.parse(localStorage.getItem("pending") || "[]");
 
 /* ---------- Configuración ---------- */
-$("#fecha").value = sel.fecha || new Date().toLocaleDateString("sv");
+$("#fecha").value = hoy(); $("#fecha").disabled = true;
 $("#aforador").value = sel.aforador || "";
 function drawCuads(){
   $("#cuads").innerHTML = Object.keys(CUADS).map(c=>`<button class="chip ${sel.cuadrante===c?"on":""}" data-c="${c}">${c}</button>`).join("");
@@ -207,7 +210,7 @@ $("#sync").onclick = async () => {
 };
 $("#go").onclick = async () => {
   if(pending.length){ const ok=await flush(); if(!ok) return alert("Hay registros pendientes sin sincronizar. Toca Sincronizar con conexión a internet antes de empezar."); }
-  sel.fecha = $("#fecha").value; sel.aforador = $("#aforador").value.trim();
+  sel.fecha = hoy(); $("#fecha").value = sel.fecha; sel.aforador = $("#aforador").value.trim();
   if(!sel.fecha) return alert("Selecciona el día de la captura");
   localStorage.setItem("sel", JSON.stringify(sel));
   $("#setup").classList.add("hide"); $("#count").classList.remove("hide");
