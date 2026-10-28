@@ -31,3 +31,8 @@ select fecha, cuadrante, punto, categoria, genero,
        count(*) as total
 from public.conteos_movilidad
 group by 1,2,3,4,5,6;
+
+-- ===== Actualización: puntos con coordenadas, clase y vista por punto =====
+-- (ya aplicado en el proyecto MobilityCounter mediante la migración "puntos_movilidad_y_relacion")
+-- Tabla public.puntos_movilidad (20 puntos con latitud/longitud), FK conteos_movilidad.punto -> puntos_movilidad.punto,
+-- columna generada conteos_movilidad.clase (vehiculo | peaton | bicicleta) y vista public.conteos_por_punto.

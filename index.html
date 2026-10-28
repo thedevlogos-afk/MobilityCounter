@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
 <title>Conteo de Movilidad</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--azul:#0b4f8a;--azul2:#1f7bc4;--naranja:#f28c28;--naranja2:#d9650f;--verde:#2e9e5b;--verde2:#1f7a45;--bg:#f2f7fb;--txt:#10253a}
@@ -36,6 +38,11 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 .bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .bar .btn{flex:1;min-width:130px}
 .status{font-size:13px;margin-top:8px;color:#4a6176}
+#map{height:340px;border-radius:12px;z-index:0}
+.tipos{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.tipo{padding:10px 6px;border:2px solid var(--verde);background:#fff;color:var(--verde2);border-radius:10px;font-weight:700;font-size:14px}
+.tipo.on{background:var(--verde);color:#fff}
+.leyenda{font-size:12px;margin-top:6px;color:#4a6176}
 .hide{display:none}
 .pill{background:#ffffff33;border-radius:20px;padding:3px 10px;font-size:13px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -51,6 +58,8 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
   <div class="cuads" id="cuads"></div>
   <label>Punto de la ciudad</label>
   <div class="puntos" id="puntos"></div>
+  <label>Tipos de elemento a contar (independientes)</label>
+  <div class="tipos" id="tipos"></div>
   <div class="row2">
     <div><label>Día de la captura</label><input type="date" id="fecha"></div>
     <div><label>Aforador (opcional)</label><input type="text" id="aforador" placeholder="Nombre"></div>
@@ -74,6 +83,9 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
   <div class="status" id="st"></div>
 </section>
 
+<!-- Mapa -->
+<section class="card"><b>Mapa de puntos</b><div id="map" style="margin-top:8px"></div><div class="leyenda">Toca un punto del mapa para seleccionarlo (antes de iniciar el conteo).</div></section>
+
 <!-- Exportar -->
 <section id="export" class="card hide">
   <b>Exportar base de datos</b>
@@ -92,8 +104,8 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 
 <script>
 /* ===== CONFIGURACIÓN: reemplaza con los datos de tu proyecto Supabase ===== */
-const SUPABASE_URL = "https://TU-PROYECTO.supabase.co";
-const SUPABASE_ANON_KEY = "TU_ANON_PUBLIC_KEY";
+const SUPABASE_URL = "https://zsmnghqjkujwgurtgxuj.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpzbW5naHFqa3Vqd2d1cnRneHVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMyMDExOTMsImV4cCI6MjEwODc3NzE5M30.S_fTx0lo7xrLH9-5acr07beLKPgFZ3lGbseNOTVJfdU";
 /* ========================================================================== */
 
 const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -110,6 +122,8 @@ const BOTONES = [
   {k:"bici",  t:"Bicicletas",       i:"🚲", cat:"bicicleta",      gen:null,    c:"verde", full:true},
 ];
 const sel = JSON.parse(localStorage.getItem("sel") || "{}");
+const TODOS = BOTONES.filter(b=>b.k).map(b=>b.k);
+if(!Array.isArray(sel.tipos) || !sel.tipos.length) sel.tipos = [...TODOS];
 let counts = {}, history = [];
 let pending = JSON.parse(localStorage.getItem("pending") || "[]");
 
@@ -124,8 +138,14 @@ function drawPuntos(){
   const p = sel.cuadrante ? CUADS[sel.cuadrante] : null;
   $("#puntos").innerHTML = p ? [1,2,3,4,5].map(n=>`<button class="chip ${sel.punto===p+n?"on":""}" data-p="${p+n}">${p+n}</button>`).join("") : "<small>Selecciona un cuadrante</small>";
   $("#puntos").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.punto=b.dataset.p;drawPuntos();$("#go").disabled=false});
-  $("#go").disabled = !sel.punto;
+  $("#go").disabled = !(sel.punto && sel.tipos.length);
+  if(window.resaltar) resaltar();
 }
+function drawTipos(){
+  $("#tipos").innerHTML = BOTONES.filter(b=>b.k).map(b=>`<button class="tipo ${sel.tipos.includes(b.k)?"on":""}" data-k="${b.k}">${b.i} ${b.gen?"Peatón "+b.t:b.t}</button>`).join("");
+  $("#tipos").querySelectorAll("button").forEach(el=>el.onclick=()=>{const k=el.dataset.k;sel.tipos=sel.tipos.includes(k)?sel.tipos.filter(x=>x!==k):[...sel.tipos,k];drawTipos();$("#go").disabled=!(sel.punto&&sel.tipos.length)});
+}
+drawTipos();
 drawCuads(); drawPuntos();
 
 /* ---------- Conteo ---------- */
@@ -140,12 +160,22 @@ $("#go").onclick = async () => {
   drawBotones(); await cargarConteos(); flush();
 };
 function drawBotones(){
-  $("#botones").innerHTML = BOTONES.map(b => b.sep ? `<div class="sep">${b.sep}</div>` :
+  const act = BOTONES.filter(b=>b.k && sel.tipos.includes(b.k));
+  const items=[]; let run=[];
+  const cierra=()=>{ if(run.length%2) run[run.length-1].full=true; run=[]; };
+  let sepPed=false;
+  act.forEach(b=>{
+    if(b.gen && !sepPed){ cierra(); items.push({sep:"Peatones"}); sepPed=true; }
+    if(!b.gen && sepPed){ cierra(); sepPed=false; }
+    const it={...b,full:false}; items.push(it); run.push(it);
+  });
+  cierra();
+  $("#botones").innerHTML = items.map(b => b.sep ? `<div class="sep">${b.sep}</div>` :
     `<button class="count ${b.c}" style="${b.full?"grid-column:1/-1":""}" data-k="${b.k}"><span class="ico">${b.i}</span><span class="n" id="n-${b.k}">0</span><span class="t">${b.t}</span></button>`).join("");
   $("#botones").querySelectorAll("button").forEach(el=>el.onclick=()=>registrar(el.dataset.k));
 }
 function pintar(){
-  let t=0; BOTONES.forEach(b=>{ if(b.k){ const v=counts[b.k]||0; t+=v; $("#n-"+b.k).textContent=v; } });
+  let t=0; BOTONES.forEach(b=>{ if(b.k && sel.tipos.includes(b.k)){ const v=counts[b.k]||0; t+=v; const e=$("#n-"+b.k); if(e) e.textContent=v; } });
   $("#tot").textContent=t;
 }
 async function cargarConteos(){
@@ -187,6 +217,27 @@ $("#undo").onclick = async () => {
 $("#back").onclick = () => { $("#count").classList.add("hide"); $("#setup").classList.remove("hide"); };
 setInterval(flush, 8000); window.addEventListener("online", flush); setNet();
 
+/* ---------- Mapa ---------- */
+const COL={Poniente:"#0b4f8a",Norte:"#f28c28",Oriente:"#2e9e5b",Sur:"#1f7bc4"};
+const map=L.map("map").setView([28.1925,-105.4715],15);
+L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,attribution:"&copy; OpenStreetMap"}).addTo(map);
+const marks={};
+window.resaltar=()=>Object.entries(marks).forEach(([p,m])=>{const on=sel.punto===p;m.setStyle({radius:on?13:9,weight:on?4:2,color:on?"#000":"#fff",fillOpacity:on?1:.85});if(on)m.bringToFront()});
+async function cargarPuntos(){
+  const {data,error}=await db.from("puntos_movilidad").select("sector,punto,latitud,longitud").order("punto");
+  if(error||!data) return;
+  const pts=L.latLngBounds();
+  data.forEach(r=>{
+    const m=L.circleMarker([r.latitud,r.longitud],{radius:9,fillColor:COL[r.sector],color:"#fff",weight:2,fillOpacity:.85}).addTo(map);
+    m.bindTooltip(r.punto,{permanent:true,direction:"top",offset:[0,-6]});
+    m.on("click",()=>{ if(!$("#count").classList.contains("hide")) return; sel.cuadrante=r.sector; sel.punto=r.punto; drawCuads(); drawPuntos(); });
+    marks[r.punto]=m; pts.extend([r.latitud,r.longitud]);
+  });
+  map.fitBounds(pts,{padding:[30,30]}); resaltar();
+}
+cargarPuntos();
+$("#go").addEventListener("click",()=>setTimeout(resaltar,0));
+
 /* ---------- Exportar ---------- */
 const abrirExp = () => { $("#export").classList.remove("hide"); $("#d1").value=$("#d2").value=sel.fecha||new Date().toLocaleDateString("sv"); };
 $("#exp1").onclick = $("#exp2").onclick = abrirExp;
@@ -194,7 +245,7 @@ $("#cerrar").onclick = () => $("#export").classList.add("hide");
 async function traer(){
   $("#exst").textContent="Descargando…"; let all=[], from=0;
   while(true){
-    let q = db.from("conteos_movilidad").select("fecha,hora:created_at,cuadrante,punto,categoria,genero,aforador").order("created_at").range(from,from+999);
+    let q = db.from("conteos_movilidad").select("fecha,hora:created_at,cuadrante,punto,clase,categoria,genero,aforador").order("created_at").range(from,from+999);
     if($("#d1").value) q=q.gte("fecha",$("#d1").value);
     if($("#d2").value) q=q.lte("fecha",$("#d2").value);
     const {data,error}=await q; if(error){$("#exst").textContent="Error: "+error.message;return null}
