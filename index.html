@@ -48,11 +48,42 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 .hide{display:none}
 .pill{background:#ffffff33;border-radius:20px;padding:3px 10px;font-size:13px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+
+/* ===== Diseño mejorado y retroalimentación al toque ===== */
+.btn{position:relative;overflow:hidden;background:linear-gradient(160deg,var(--azul2),var(--azul));box-shadow:0 4px 0 #083a66,0 6px 12px #0b4f8a44;transition:transform .08s,box-shadow .08s,filter .15s;letter-spacing:.2px;cursor:pointer;touch-action:manipulation}
+.btn.verde{background:linear-gradient(160deg,#47bb78,var(--verde2));box-shadow:0 4px 0 #17603a,0 6px 12px #2e9e5b44}
+.btn.naranja{background:linear-gradient(160deg,#f7a448,var(--naranja2));box-shadow:0 4px 0 #a84d09,0 6px 12px #f28c2855}
+.btn.gris{background:linear-gradient(160deg,#8397ab,#5d7083);box-shadow:0 4px 0 #46586a,0 6px 12px #5d708344}
+.btn:active:not(:disabled){transform:translateY(3px);box-shadow:0 1px 0 rgba(0,0,0,.25);filter:brightness(1.08)}
+.btn:disabled{filter:grayscale(.5)}
+.chip,.tipo{transition:transform .1s,background .15s,box-shadow .15s;box-shadow:0 2px 0 #0b4f8a22}
+.chip:active,.tipo:active{transform:scale(.93)}
+.chip.on{box-shadow:0 4px 10px #f28c2866;transform:translateY(-1px)}
+.tipo.on{box-shadow:0 4px 10px #2e9e5b55}
+.count{position:relative;overflow:hidden;border-radius:20px;box-shadow:0 6px 0 rgba(0,0,0,.22),0 10px 18px rgba(11,79,138,.25);text-shadow:0 1px 2px rgba(0,0,0,.25);user-select:none;-webkit-user-select:none;transition:transform .08s,box-shadow .08s,filter .1s}
+.count::before{content:"";position:absolute;inset:0 0 55% 0;background:linear-gradient(180deg,rgba(255,255,255,.28),rgba(255,255,255,0));pointer-events:none}
+.count:active{transform:translateY(5px) scale(.97);box-shadow:0 1px 0 rgba(0,0,0,.25),0 3px 8px rgba(11,79,138,.2);filter:brightness(1.12)}
+.count .ico{font-size:34px;filter:drop-shadow(0 2px 2px rgba(0,0,0,.25))}
+.count .n{font-size:44px;font-variant-numeric:tabular-nums}
+.count .t{font-size:13px;opacity:.95;text-transform:uppercase;letter-spacing:.5px}
+.pop{animation:pop .28s ease-out}
+@keyframes pop{0%{transform:scale(1)}40%{transform:scale(1.45)}100%{transform:scale(1)}}
+.ripple{position:absolute;border-radius:50%;background:rgba(255,255,255,.55);transform:scale(0);animation:rip .55s ease-out;pointer-events:none}
+@keyframes rip{to{transform:scale(1);opacity:0}}
+.mas{position:absolute;font-weight:800;font-size:26px;color:#fff;pointer-events:none;animation:sube .7s ease-out forwards;text-shadow:0 2px 4px rgba(0,0,0,.4)}
+@keyframes sube{from{opacity:1;transform:translateY(0)}to{opacity:0;transform:translateY(-60px)}}
+.spin{display:inline-block;animation:giro .8s linear infinite}
+@keyframes giro{to{transform:rotate(360deg)}}
+#toast{position:fixed;left:50%;bottom:24px;transform:translate(-50%,30px);background:#10253a;color:#fff;padding:12px 18px;border-radius:30px;font-weight:700;opacity:0;pointer-events:none;transition:.25s;z-index:9999;box-shadow:0 6px 18px #0006;max-width:90%;text-align:center}
+#toast.show{opacity:1;transform:translate(-50%,0)}
+#toast.ok{background:var(--verde2)}#toast.err{background:var(--naranja2)}
+.card{border:1px solid #dbe8f3}
 </style>
 </head>
 <body>
 <header><h1>🚦 Conteo de Movilidad</h1><span class="pill" id="net">●</span></header>
 <main>
+<div id="toast"></div>
 
 <!-- PANTALLA 1: configuración -->
 <section id="setup" class="card">
@@ -158,7 +189,15 @@ drawTipos();
 drawCuads(); drawPuntos();
 
 /* ---------- Conteo ---------- */
-$("#sync").onclick = async () => { const b=$("#sync"); b.disabled=true; b.textContent="Sincronizando…"; await flush(); b.disabled=false; b.textContent="🔄 Sincronizar"; };
+const toast=(m,t)=>{const e=$("#toast");e.textContent=m;e.className="show "+(t||"");clearTimeout(toast.t);toast.t=setTimeout(()=>e.className="",2400)};
+$("#sync").onclick = async () => {
+  const b=$("#sync"); b.disabled=true; b.innerHTML='<span class="spin">🔄</span> Sincronizando…';
+  const antes=pending.length; const ok=await flush();
+  b.disabled=false; b.innerHTML="🔄 Sincronizar";
+  if(ok){ toast(antes?`✔ ${antes} registro(s) sincronizado(s)`:"✔ Todo sincronizado, 0 pendientes","ok"); navigator.vibrate?.(40);
+    $("#sync-st").textContent=`✔ Sincronizado: 0 pendientes · ${new Date().toLocaleTimeString("es-MX",{hour:"2-digit",minute:"2-digit"})}`; }
+  else { toast(`⚠ ${pending.length} pendiente(s): revisa tu conexión`,"err"); navigator.vibrate?.([60,40,60]); }
+};
 $("#go").onclick = async () => {
   if(pending.length){ const ok=await flush(); if(!ok) return alert("Hay registros pendientes sin sincronizar. Toca Sincronizar con conexión a internet antes de empezar."); }
   sel.fecha = $("#fecha").value; sel.aforador = $("#aforador").value.trim();
@@ -195,7 +234,7 @@ async function cargarConteos(){
   pending.filter(p=>p.fecha===sel.fecha&&p.punto===sel.punto).forEach(p=>{const b=BOTONES.find(x=>x.cat===p.categoria&&x.gen===p.genero);if(b)counts[b.k]=(counts[b.k]||0)+1});
   pintar();
 }
-function registrar(k){
+var registrar=function registrar(k){
   const b = BOTONES.find(x=>x.k===k);
   counts[k]=(counts[k]||0)+1; pintar(); navigator.vibrate?.(25);
   const reg = {uid:crypto.randomUUID(), fecha:sel.fecha, cuadrante:sel.cuadrante, punto:sel.punto, categoria:b.cat, genero:b.gen, aforador:sel.aforador||null};
@@ -231,6 +270,21 @@ $("#undo").onclick = async () => {
 };
 $("#back").onclick = () => { $("#count").classList.add("hide"); $("#setup").classList.remove("hide"); };
 setInterval(flush, 8000); window.addEventListener("online", flush); setNet();
+
+/* ---------- Efectos de click ---------- */
+function efecto(el,ev,mas){
+  const r=el.getBoundingClientRect(), d=Math.max(r.width,r.height)*1.6;
+  const x=(ev.clientX||r.left+r.width/2)-r.left, y=(ev.clientY||r.top+r.height/2)-r.top;
+  const rp=document.createElement("span"); rp.className="ripple";
+  rp.style.cssText=`width:${d}px;height:${d}px;left:${x-d/2}px;top:${y-d/2}px`; el.appendChild(rp); setTimeout(()=>rp.remove(),600);
+  if(mas){ const m=document.createElement("span"); m.className="mas"; m.textContent="+1"; m.style.cssText=`left:${x-14}px;top:${y-30}px`; el.appendChild(m); setTimeout(()=>m.remove(),750); }
+}
+document.addEventListener("pointerdown",ev=>{
+  const c=ev.target.closest(".count"); if(c) return efecto(c,ev,true);
+  const b=ev.target.closest(".btn,.chip,.tipo"); if(b&&!b.disabled) efecto(b,ev,false);
+});
+const _reg=registrar;
+registrar=function(k){ _reg(k); const n=$("#n-"+k); if(n){n.classList.remove("pop");void n.offsetWidth;n.classList.add("pop");} };
 
 /* ---------- Mapa ---------- */
 const COL={Poniente:"#0b4f8a",Norte:"#f28c28",Oriente:"#2e9e5b",Sur:"#1f7bc4"};
