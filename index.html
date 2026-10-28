@@ -128,14 +128,21 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 
 <!-- Exportar -->
 <section id="export" class="card hide">
-  <b>Exportar base de datos</b>
-  <div class="row2">
-    <div><label>Desde</label><input type="date" id="d1"></div>
-    <div><label>Hasta</label><input type="date" id="d2"></div>
+  <b>📥 Exportar base de datos</b>
+  <label>Periodo</label>
+  <div class="tipos" id="modo">
+    <button class="tipo on" data-m="dia">Un día</button>
+    <button class="tipo" data-m="rango">Rango de días</button>
+    <button class="tipo" data-m="todos" style="grid-column:1/-1">Todos los registros</button>
   </div>
-  <div class="bar">
-    <button class="btn verde" id="xlsx">Excel (.xlsx)</button>
-    <button class="btn" id="csv">CSV</button>
+  <div class="row2" id="fechas">
+    <div><label id="l1">Día a exportar</label><input type="date" id="d1"></div>
+    <div id="w2" class="hide"><label>Hasta</label><input type="date" id="d2"></div>
+  </div>
+  <div class="bar" style="flex-direction:column">
+    <button class="btn verde" id="csv">CSV · Registros detallados</button>
+    <button class="btn naranja" id="csvr">CSV · Resumen por hora y punto</button>
+    <button class="btn" id="xlsx">Excel (.xlsx) · Detalle + Resumen</button>
     <button class="btn gris" id="cerrar">Cerrar</button>
   </div>
   <div class="status" id="exst"></div>
@@ -308,38 +315,84 @@ cargarPuntos();
 $("#go").addEventListener("click",()=>setTimeout(resaltar,0));
 
 /* ---------- Exportar ---------- */
-const abrirExp = () => { $("#export").classList.remove("hide"); $("#d1").value=$("#d2").value=sel.fecha||new Date().toLocaleDateString("sv"); };
+const DIAS=["domingo","lunes","martes","miércoles","jueves","viernes","sábado"];
+const CAT_ES={automovil:"Automóvil",motocicleta:"Motocicleta",camion_urbano:"Camión urbano",camion_carga:"Camión de carga",peaton:"Peatón",bicicleta:"Bicicleta"};
+const CLASE_ES={vehiculo:"Vehículo",peaton:"Peatón",bicicleta:"Bicicleta"};
+const elemento = r => r.categoria==="peaton" ? (r.genero==="mujer"?"Peatón mujer":"Peatón hombre") : CAT_ES[r.categoria];
+const diaSemana = f => { const [y,m,d]=f.split("-").map(Number); return DIAS[new Date(y,m-1,d).getDay()]; };
+
+function detalle(rows,P){
+  const out = rows.map(r=>{
+    const loc=new Date(r.created_at).toLocaleString("sv-SE"), p=P[r.punto]||{};
+    return {"Fecha":r.fecha,"Día de la semana":diaSemana(r.fecha),"Hora":loc.slice(11,19),"Bloque horario":loc.slice(11,13)+":00",
+      "Sector":p.sector||r.cuadrante,"Punto":r.punto,"Latitud":p.latitud??"","Longitud":p.longitud??"",
+      "Clase":CLASE_ES[r.clase]||r.clase,"Tipo":CAT_ES[r.categoria]||r.categoria,"Género":r.genero?(r.genero==="mujer"?"Mujer":"Hombre"):"",
+      "Elemento":elemento(r),"Cantidad":1,"Aforador":r.aforador||"","ID registro":r.id};
+  });
+  out.sort((a,b)=>a.Fecha.localeCompare(b.Fecha)||a.Punto.localeCompare(b.Punto)||a.Hora.localeCompare(b.Hora));
+  return out.map((o,i)=>({"No.":i+1,...o}));
+}
+const COLS=[["Automóvil","Automóviles"],["Motocicleta","Motocicletas"],["Camión urbano","Camiones urbanos"],["Camión de carga","Camiones de carga"],["Peatón hombre","Peatones hombres"],["Peatón mujer","Peatones mujeres"],["Bicicleta","Bicicletas"]];
+function resumenHora(det){
+  const m={};
+  det.forEach(r=>{
+    const k=[r.Fecha,r.Punto,r["Bloque horario"]].join("|");
+    const o=m[k]||(m[k]={"Fecha":r.Fecha,"Día de la semana":r["Día de la semana"],"Bloque horario":r["Bloque horario"],"Sector":r.Sector,"Punto":r.Punto,"Latitud":r.Latitud,"Longitud":r.Longitud,...Object.fromEntries(COLS.map(c=>[c[1],0]))});
+    const c=COLS.find(c=>c[0]===r.Elemento); if(c) o[c[1]]++;
+  });
+  return Object.values(m).map(o=>({...o,
+    "Total peatones":o["Peatones hombres"]+o["Peatones mujeres"],
+    "Total vehículos":o["Automóviles"]+o["Motocicletas"]+o["Camiones urbanos"]+o["Camiones de carga"],
+    "Total general":COLS.reduce((t,c)=>t+o[c[1]],0)}))
+    .sort((a,b)=>a.Fecha.localeCompare(b.Fecha)||a.Punto.localeCompare(b.Punto)||a["Bloque horario"].localeCompare(b["Bloque horario"]));
+}
+
+let modo="dia";
+const abrirExp = () => { $("#export").classList.remove("hide"); if(!$("#d1").value) $("#d1").value=sel.fecha||new Date().toLocaleDateString("sv"); $("#export").scrollIntoView({behavior:"smooth",block:"center"}); };
 $("#exp1").onclick = $("#exp2").onclick = abrirExp;
 $("#cerrar").onclick = () => $("#export").classList.add("hide");
+document.querySelectorAll("#modo button").forEach(b=>b.onclick=()=>{
+  modo=b.dataset.m; document.querySelectorAll("#modo button").forEach(x=>x.classList.toggle("on",x===b));
+  $("#fechas").classList.toggle("hide",modo==="todos"); $("#w2").classList.toggle("hide",modo!=="rango");
+  $("#l1").textContent = modo==="rango" ? "Desde" : "Día a exportar";
+  if(modo==="rango" && !$("#d2").value) $("#d2").value=$("#d1").value;
+});
+function periodo(){
+  if(modo==="todos") return {d1:null,d2:null,tag:"todos"};
+  const d1=$("#d1").value, d2=modo==="rango"?$("#d2").value:d1;
+  if(!d1||!d2){ $("#exst").textContent="Selecciona el día a exportar."; return null; }
+  if(d2<d1){ $("#exst").textContent="La fecha final debe ser posterior a la inicial."; return null; }
+  return {d1,d2,tag:d1===d2?d1:d1+"_a_"+d2};
+}
 async function traer(){
-  $("#exst").textContent="Descargando…"; let all=[], from=0;
+  const per=periodo(); if(!per) return null;
+  $("#exst").textContent="Sincronizando y descargando…";
+  if(pending.length) await flush();
+  const {data:pts,error:e0}=await db.from("puntos_movilidad").select("punto,sector,latitud,longitud");
+  if(e0){ $("#exst").textContent="Error: "+e0.message; return null; }
+  const P=Object.fromEntries(pts.map(x=>[x.punto,x]));
+  let all=[], from=0;
   while(true){
-    let q = db.from("conteos_movilidad").select("fecha,hora:created_at,cuadrante,punto,clase,categoria,genero,aforador").order("created_at").range(from,from+999);
-    if($("#d1").value) q=q.gte("fecha",$("#d1").value);
-    if($("#d2").value) q=q.lte("fecha",$("#d2").value);
-    const {data,error}=await q; if(error){$("#exst").textContent="Error: "+error.message;return null}
+    let q=db.from("conteos_movilidad").select("id,created_at,fecha,cuadrante,punto,clase,categoria,genero,aforador").order("id").range(from,from+999);
+    if(per.d1) q=q.gte("fecha",per.d1); if(per.d2) q=q.lte("fecha",per.d2);
+    const {data,error}=await q; if(error){ $("#exst").textContent="Error: "+error.message; return null; }
     all=all.concat(data); if(data.length<1000) break; from+=1000;
   }
-  $("#exst").textContent=`${all.length} registros.`; return all;
+  if(!all.length){ $("#exst").textContent="No hay registros en ese periodo."; toast("No hay registros en ese periodo","err"); return null; }
+  const det=detalle(all,P);
+  $("#exst").textContent=`${det.length} registros listos`+(pending.length?` (⚠ ${pending.length} sin sincronizar en este dispositivo)`:"")+".";
+  return {det, res:resumenHora(det), tag:per.tag};
 }
-function resumen(rows){
-  const m={};
-  rows.forEach(r=>{const k=[r.fecha,r.cuadrante,r.punto,r.categoria,r.genero||""].join("|"); m[k]=(m[k]||0)+1});
-  return Object.entries(m).map(([k,v])=>{const [fecha,cuadrante,punto,categoria,genero]=k.split("|");return{fecha,cuadrante,punto,categoria,genero,total:v}});
-}
-const nombre = () => `conteo_movilidad_${$("#d1").value||"inicio"}_${$("#d2").value||"fin"}`;
+function descargar(blob,nombre){ const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nombre; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); }
+const aCSV = rows => new Blob(["\ufeff"+XLSX.utils.sheet_to_csv(XLSX.utils.json_to_sheet(rows))],{type:"text/csv;charset=utf-8"});
+$("#csv").onclick  = async () => { const r=await traer(); if(r){ descargar(aCSV(r.det),`conteo_movilidad_detalle_${r.tag}.csv`); toast("✔ CSV detallado descargado","ok"); } };
+$("#csvr").onclick = async () => { const r=await traer(); if(r){ descargar(aCSV(r.res),`conteo_movilidad_resumen_${r.tag}.csv`); toast("✔ CSV de resumen descargado","ok"); } };
 $("#xlsx").onclick = async () => {
-  const rows=await traer(); if(!rows) return;
+  const r=await traer(); if(!r) return;
   const wb=XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"Registros");
-  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(resumen(rows)),"Resumen");
-  XLSX.writeFile(wb,nombre()+".xlsx");
-};
-$("#csv").onclick = async () => {
-  const rows=await traer(); if(!rows) return;
-  const ws=XLSX.utils.json_to_sheet(rows);
-  const blob=new Blob(["\ufeff"+XLSX.utils.sheet_to_csv(ws)],{type:"text/csv;charset=utf-8"});
-  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nombre()+".csv"; a.click();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(r.det),"Detalle");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(r.res),"Resumen por hora");
+  XLSX.writeFile(wb,`conteo_movilidad_${r.tag}.xlsx`); toast("✔ Excel descargado","ok");
 };
 </script>
 </body>
