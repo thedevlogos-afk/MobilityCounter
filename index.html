@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Conteo de Movilidad</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+:root{--azul:#0b4f8a;--azul2:#1f7bc4;--naranja:#f28c28;--naranja2:#d9650f;--verde:#2e9e5b;--verde2:#1f7a45;--bg:#f2f7fb;--txt:#10253a}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font-family:system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--txt)}
+header{background:linear-gradient(90deg,var(--azul),var(--azul2));color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center}
+header h1{font-size:18px;margin:0}
+header small{opacity:.9}
+main{max-width:720px;margin:0 auto;padding:14px}
+.card{background:#fff;border-radius:14px;padding:16px;box-shadow:0 2px 8px #0b4f8a22;margin-bottom:14px}
+label{font-weight:600;display:block;margin:10px 0 6px}
+input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px;font-size:16px}
+.puntos{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+.chip{padding:12px 0;border:2px solid var(--azul);background:#fff;color:var(--azul);border-radius:10px;font-weight:700;font-size:16px}
+.chip.on{background:var(--naranja);border-color:var(--naranja);color:#fff}
+.cuads{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.btn{border:0;border-radius:12px;padding:14px;font-size:16px;font-weight:700;color:#fff;background:var(--azul)}
+.btn.verde{background:var(--verde)}.btn.naranja{background:var(--naranja)}.btn.gris{background:#6b7f93}
+.btn:disabled{opacity:.4}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.count{position:relative;border:0;border-radius:16px;color:#fff;padding:16px 8px;min-height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-weight:700;touch-action:manipulation;transition:transform .08s}
+.count:active{transform:scale(.95)}
+.count .ico{font-size:30px}.count .n{font-size:38px;line-height:1}.count .t{font-size:14px}
+.azul{background:linear-gradient(160deg,var(--azul2),var(--azul))}
+.naranja{background:linear-gradient(160deg,#f7a448,var(--naranja2))}
+.verde{background:linear-gradient(160deg,#47bb78,var(--verde2))}
+.ped{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.sep{grid-column:1/-1;font-weight:700;color:var(--verde2);margin:4px 0 -2px}
+.bar{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.bar .btn{flex:1;min-width:130px}
+.status{font-size:13px;margin-top:8px;color:#4a6176}
+.hide{display:none}
+.pill{background:#ffffff33;border-radius:20px;padding:3px 10px;font-size:13px}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+</style>
+</head>
+<body>
+<header><h1>🚦 Conteo de Movilidad</h1><span class="pill" id="net">●</span></header>
+<main>
+
+<!-- PANTALLA 1: configuración -->
+<section id="setup" class="card">
+  <label>Cuadrante</label>
+  <div class="cuads" id="cuads"></div>
+  <label>Punto de la ciudad</label>
+  <div class="puntos" id="puntos"></div>
+  <div class="row2">
+    <div><label>Día de la captura</label><input type="date" id="fecha"></div>
+    <div><label>Aforador (opcional)</label><input type="text" id="aforador" placeholder="Nombre"></div>
+  </div>
+  <div class="bar"><button class="btn verde" id="go" disabled>Iniciar conteo</button></div>
+  <div class="bar"><button class="btn gris" id="exp1">⬇ Exportar datos</button></div>
+</section>
+
+<!-- PANTALLA 2: conteo -->
+<section id="count" class="hide">
+  <div class="card" style="display:flex;justify-content:space-between;align-items:center">
+    <div><b id="lbl" style="font-size:20px"></b><br><small id="lblf"></small></div>
+    <div style="text-align:right"><small>Total</small><br><b id="tot" style="font-size:26px;color:var(--naranja2)">0</b></div>
+  </div>
+  <div class="grid" id="botones"></div>
+  <div class="bar">
+    <button class="btn naranja" id="undo">↩ Deshacer último</button>
+    <button class="btn" id="exp2">⬇ Exportar</button>
+    <button class="btn gris" id="back">Cambiar punto</button>
+  </div>
+  <div class="status" id="st"></div>
+</section>
+
+<!-- Exportar -->
+<section id="export" class="card hide">
+  <b>Exportar base de datos</b>
+  <div class="row2">
+    <div><label>Desde</label><input type="date" id="d1"></div>
+    <div><label>Hasta</label><input type="date" id="d2"></div>
+  </div>
+  <div class="bar">
+    <button class="btn verde" id="xlsx">Excel (.xlsx)</button>
+    <button class="btn" id="csv">CSV</button>
+    <button class="btn gris" id="cerrar">Cerrar</button>
+  </div>
+  <div class="status" id="exst"></div>
+</section>
+</main>
+
+<script>
+/* ===== CONFIGURACIÓN: reemplaza con los datos de tu proyecto Supabase ===== */
+const SUPABASE_URL = "https://TU-PROYECTO.supabase.co";
+const SUPABASE_ANON_KEY = "TU_ANON_PUBLIC_KEY";
+/* ========================================================================== */
+
+const db = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = s => document.querySelector(s);
+const CUADS = {Poniente:"P", Norte:"N", Oriente:"O", Sur:"S"};
+const BOTONES = [
+  {k:"auto",  t:"Automóviles",      i:"🚗", cat:"automovil",      gen:null,    c:"azul"},
+  {k:"moto",  t:"Motocicletas",     i:"🏍️", cat:"motocicleta",    gen:null,    c:"azul"},
+  {k:"cu",    t:"Camiones Urbanos", i:"🚌", cat:"camion_urbano",  gen:null,    c:"naranja"},
+  {k:"cc",    t:"Camiones de Carga",i:"🚛", cat:"camion_carga",   gen:null,    c:"naranja"},
+  {sep:"Peatones"},
+  {k:"ph",    t:"Hombre",           i:"🚶‍♂️", cat:"peaton",         gen:"hombre",c:"verde"},
+  {k:"pm",    t:"Mujer",            i:"🚶‍♀️", cat:"peaton",         gen:"mujer", c:"verde"},
+  {k:"bici",  t:"Bicicletas",       i:"🚲", cat:"bicicleta",      gen:null,    c:"verde", full:true},
+];
+const sel = JSON.parse(localStorage.getItem("sel") || "{}");
+let counts = {}, history = [];
+let pending = JSON.parse(localStorage.getItem("pending") || "[]");
+
+/* ---------- Configuración ---------- */
+$("#fecha").value = sel.fecha || new Date().toLocaleDateString("sv");
+$("#aforador").value = sel.aforador || "";
+function drawCuads(){
+  $("#cuads").innerHTML = Object.keys(CUADS).map(c=>`<button class="chip ${sel.cuadrante===c?"on":""}" data-c="${c}">${c}</button>`).join("");
+  $("#cuads").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.cuadrante=b.dataset.c;sel.punto=null;drawCuads();drawPuntos()});
+}
+function drawPuntos(){
+  const p = sel.cuadrante ? CUADS[sel.cuadrante] : null;
+  $("#puntos").innerHTML = p ? [1,2,3,4,5].map(n=>`<button class="chip ${sel.punto===p+n?"on":""}" data-p="${p+n}">${p+n}</button>`).join("") : "<small>Selecciona un cuadrante</small>";
+  $("#puntos").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.punto=b.dataset.p;drawPuntos();$("#go").disabled=false});
+  $("#go").disabled = !sel.punto;
+}
+drawCuads(); drawPuntos();
+
+/* ---------- Conteo ---------- */
+$("#go").onclick = async () => {
+  sel.fecha = $("#fecha").value; sel.aforador = $("#aforador").value.trim();
+  if(!sel.fecha) return alert("Selecciona el día de la captura");
+  localStorage.setItem("sel", JSON.stringify(sel));
+  $("#setup").classList.add("hide"); $("#count").classList.remove("hide");
+  $("#lbl").textContent = `${sel.cuadrante} · ${sel.punto}`;
+  $("#lblf").textContent = new Date(sel.fecha+"T12:00").toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  history = []; counts = {};
+  drawBotones(); await cargarConteos(); flush();
+};
+function drawBotones(){
+  $("#botones").innerHTML = BOTONES.map(b => b.sep ? `<div class="sep">${b.sep}</div>` :
+    `<button class="count ${b.c}" style="${b.full?"grid-column:1/-1":""}" data-k="${b.k}"><span class="ico">${b.i}</span><span class="n" id="n-${b.k}">0</span><span class="t">${b.t}</span></button>`).join("");
+  $("#botones").querySelectorAll("button").forEach(el=>el.onclick=()=>registrar(el.dataset.k));
+}
+function pintar(){
+  let t=0; BOTONES.forEach(b=>{ if(b.k){ const v=counts[b.k]||0; t+=v; $("#n-"+b.k).textContent=v; } });
+  $("#tot").textContent=t;
+}
+async function cargarConteos(){
+  const {data,error} = await db.from("conteos_movilidad").select("categoria,genero").eq("fecha",sel.fecha).eq("punto",sel.punto).limit(100000);
+  if(!error && data) data.forEach(r=>{ const b=BOTONES.find(x=>x.cat===r.categoria && x.gen===r.genero); if(b) counts[b.k]=(counts[b.k]||0)+1; });
+  pending.filter(p=>p.fecha===sel.fecha&&p.punto===sel.punto).forEach(p=>{const b=BOTONES.find(x=>x.cat===p.categoria&&x.gen===p.genero);if(b)counts[b.k]=(counts[b.k]||0)+1});
+  pintar();
+}
+function registrar(k){
+  const b = BOTONES.find(x=>x.k===k);
+  counts[k]=(counts[k]||0)+1; pintar(); navigator.vibrate?.(25);
+  const reg = {uid:crypto.randomUUID(), fecha:sel.fecha, cuadrante:sel.cuadrante, punto:sel.punto, categoria:b.cat, genero:b.gen, aforador:sel.aforador||null};
+  history.push({k, uid:reg.uid});
+  pending.push(reg); savePending(); flush();
+}
+const savePending = () => localStorage.setItem("pending", JSON.stringify(pending));
+let flushing=false;
+async function flush(){
+  if(flushing||!pending.length) return setNet();
+  flushing=true;
+  const lote = pending.slice(0,200);
+  const {error} = await db.from("conteos_movilidad").insert(lote.map(({uid,...r})=>({...r,uid})));
+  if(!error){ const ids=new Set(lote.map(l=>l.uid)); pending=pending.filter(p=>!ids.has(p.uid)); savePending(); }
+  flushing=false; setNet(!error);
+  if(!error && pending.length) flush();
+}
+function setNet(ok){
+  const n=$("#net"); const p=pending.length;
+  n.textContent = p ? `⏳ ${p} por sincronizar` : "● Sincronizado";
+  $("#st").textContent = p ? "Sin conexión o error: los registros se guardarán al recuperar red." : "Todos los registros guardados.";
+}
+$("#undo").onclick = async () => {
+  const h = history.pop(); if(!h) return;
+  counts[h.k]=Math.max(0,(counts[h.k]||0)-1); pintar();
+  const i = pending.findIndex(p=>p.uid===h.uid);
+  if(i>=0){ pending.splice(i,1); savePending(); setNet(); }
+  else await db.from("conteos_movilidad").delete().eq("uid",h.uid);
+};
+$("#back").onclick = () => { $("#count").classList.add("hide"); $("#setup").classList.remove("hide"); };
+setInterval(flush, 8000); window.addEventListener("online", flush); setNet();
+
+/* ---------- Exportar ---------- */
+const abrirExp = () => { $("#export").classList.remove("hide"); $("#d1").value=$("#d2").value=sel.fecha||new Date().toLocaleDateString("sv"); };
+$("#exp1").onclick = $("#exp2").onclick = abrirExp;
+$("#cerrar").onclick = () => $("#export").classList.add("hide");
+async function traer(){
+  $("#exst").textContent="Descargando…"; let all=[], from=0;
+  while(true){
+    let q = db.from("conteos_movilidad").select("fecha,hora:created_at,cuadrante,punto,categoria,genero,aforador").order("created_at").range(from,from+999);
+    if($("#d1").value) q=q.gte("fecha",$("#d1").value);
+    if($("#d2").value) q=q.lte("fecha",$("#d2").value);
+    const {data,error}=await q; if(error){$("#exst").textContent="Error: "+error.message;return null}
+    all=all.concat(data); if(data.length<1000) break; from+=1000;
+  }
+  $("#exst").textContent=`${all.length} registros.`; return all;
+}
+function resumen(rows){
+  const m={};
+  rows.forEach(r=>{const k=[r.fecha,r.cuadrante,r.punto,r.categoria,r.genero||""].join("|"); m[k]=(m[k]||0)+1});
+  return Object.entries(m).map(([k,v])=>{const [fecha,cuadrante,punto,categoria,genero]=k.split("|");return{fecha,cuadrante,punto,categoria,genero,total:v}});
+}
+const nombre = () => `conteo_movilidad_${$("#d1").value||"inicio"}_${$("#d2").value||"fin"}`;
+$("#xlsx").onclick = async () => {
+  const rows=await traer(); if(!rows) return;
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),"Registros");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(resumen(rows)),"Resumen");
+  XLSX.writeFile(wb,nombre()+".xlsx");
+};
+$("#csv").onclick = async () => {
+  const rows=await traer(); if(!rows) return;
+  const ws=XLSX.utils.json_to_sheet(rows);
+  const blob=new Blob(["\ufeff"+XLSX.utils.sheet_to_csv(ws)],{type:"text/csv;charset=utf-8"});
+  const a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download=nombre()+".csv"; a.click();
+};
+</script>
+</body>
+</html>
