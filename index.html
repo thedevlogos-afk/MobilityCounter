@@ -43,6 +43,8 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 .tipo{padding:10px 6px;border:2px solid var(--verde);background:#fff;color:var(--verde2);border-radius:10px;font-weight:700;font-size:14px}
 .tipo.on{background:var(--verde);color:#fff}
 .leyenda{font-size:12px;margin-top:6px;color:#4a6176}
+.aviso{background:#fff4e6;border:2px solid var(--naranja);border-radius:12px;padding:12px;margin-bottom:6px}
+.aviso ol{margin:6px 0 10px;padding-left:20px;font-size:14px}
 .hide{display:none}
 .pill{background:#ffffff33;border-radius:20px;padding:3px 10px;font-size:13px}
 .row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
@@ -54,6 +56,13 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 
 <!-- PANTALLA 1: configuración -->
 <section id="setup" class="card">
+  <div class="aviso"><b>Antes de empezar</b>
+    <ol><li>Toca <b>Sincronizar</b> y espera el mensaje verde ✔ (0 pendientes).</li>
+    <li>Elige cuadrante, punto, tipos de elemento y día de captura.</li>
+    <li>Toca <b>Iniciar conteo</b>. Un toque = un registro; usa <i>Deshacer</i> si te equivocas.</li></ol>
+    <button class="btn naranja" id="sync" style="width:100%">🔄 Sincronizar</button>
+    <div class="status" id="sync-st"></div>
+  </div>
   <label>Cuadrante</label>
   <div class="cuads" id="cuads"></div>
   <label>Punto de la ciudad</label>
@@ -149,7 +158,9 @@ drawTipos();
 drawCuads(); drawPuntos();
 
 /* ---------- Conteo ---------- */
+$("#sync").onclick = async () => { const b=$("#sync"); b.disabled=true; b.textContent="Sincronizando…"; await flush(); b.disabled=false; b.textContent="🔄 Sincronizar"; };
 $("#go").onclick = async () => {
+  if(pending.length){ const ok=await flush(); if(!ok) return alert("Hay registros pendientes sin sincronizar. Toca Sincronizar con conexión a internet antes de empezar."); }
   sel.fecha = $("#fecha").value; sel.aforador = $("#aforador").value.trim();
   if(!sel.fecha) return alert("Selecciona el día de la captura");
   localStorage.setItem("sel", JSON.stringify(sel));
@@ -194,18 +205,22 @@ function registrar(k){
 const savePending = () => localStorage.setItem("pending", JSON.stringify(pending));
 let flushing=false;
 async function flush(){
-  if(flushing||!pending.length) return setNet();
-  flushing=true;
-  const lote = pending.slice(0,200);
-  const {error} = await db.from("conteos_movilidad").insert(lote.map(({uid,...r})=>({...r,uid})));
-  if(!error){ const ids=new Set(lote.map(l=>l.uid)); pending=pending.filter(p=>!ids.has(p.uid)); savePending(); }
-  flushing=false; setNet(!error);
-  if(!error && pending.length) flush();
+  if(flushing) return false;
+  flushing=true; let ok=true;
+  while(pending.length){
+    const lote = pending.slice(0,200);
+    const {error} = await db.from("conteos_movilidad").upsert(lote, {onConflict:"uid", ignoreDuplicates:true});
+    if(error){ ok=false; break; }
+    const ids=new Set(lote.map(l=>l.uid)); pending=pending.filter(p=>!ids.has(p.uid)); savePending();
+  }
+  flushing=false; setNet(ok); return ok && !pending.length;
 }
 function setNet(ok){
   const n=$("#net"); const p=pending.length;
   n.textContent = p ? `⏳ ${p} por sincronizar` : "● Sincronizado";
-  $("#st").textContent = p ? "Sin conexión o error: los registros se guardarán al recuperar red." : "Todos los registros guardados.";
+  const msg = p ? "Sin conexión o error: los registros se guardarán al recuperar red." : "Todos los registros guardados.";
+  $("#st").textContent = msg;
+  const ss=$("#sync-st"); if(ss){ ss.textContent = p ? `⚠ ${p} registro(s) pendiente(s). Verifica tu conexión y vuelve a sincronizar.` : "✔ Sincronizado: 0 pendientes."; ss.style.color = p ? "#d9650f" : "#1f7a45"; ss.style.fontWeight="700"; }
 }
 $("#undo").onclick = async () => {
   const h = history.pop(); if(!h) return;
