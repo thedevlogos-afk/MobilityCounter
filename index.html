@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
 :root{--azul:#0b4f8a;--azul2:#1f7bc4;--naranja:#f28c28;--naranja2:#d9650f;--verde:#2e9e5b;--verde2:#1f7a45;--bg:#f2f7fb;--txt:#10253a}
@@ -78,12 +79,32 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 #toast.show{opacity:1;transform:translate(-50%,0)}
 #toast.ok{background:var(--verde2)}#toast.err{background:var(--naranja2)}
 .card{border:1px solid #dbe8f3}
+
+/* ===== Pestañas y análisis ===== */
+.tabs{display:flex;gap:8px;margin-bottom:12px;position:sticky;top:0;z-index:500;background:var(--bg);padding:6px 0}
+.tab{flex:1;padding:12px;border:0;border-radius:12px;font-weight:800;font-size:15px;background:#fff;color:var(--azul);box-shadow:0 2px 0 #0b4f8a22;cursor:pointer;transition:.15s}
+.tab.on{background:linear-gradient(160deg,var(--azul2),var(--azul));color:#fff;box-shadow:0 4px 10px #0b4f8a55}
+.filtros{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.filtros select{background:#fff}
+.kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.kpi{border-radius:14px;padding:10px 6px;text-align:center;color:#fff}
+.kpi b{display:block;font-size:24px;line-height:1.1}.kpi span{font-size:11px;opacity:.95;text-transform:uppercase;letter-spacing:.4px}
+.kpi.a{background:linear-gradient(160deg,var(--azul2),var(--azul))}.kpi.n{background:linear-gradient(160deg,#f7a448,var(--naranja2))}.kpi.v{background:linear-gradient(160deg,#47bb78,var(--verde2))}
+.cv{position:relative;height:300px;margin-top:8px}
+.tbl{width:100%;border-collapse:collapse;font-size:12px;white-space:nowrap}
+.tbl th{background:var(--azul);color:#fff;padding:6px 8px;position:sticky;top:0}
+.tbl td{padding:5px 8px;text-align:right;border-bottom:1px solid #e3edf5}
+.tbl td:first-child,.tbl th:first-child{text-align:left;font-weight:700}
+.tbl tr:nth-child(even) td{background:#f5f9fc}
+.tbl tfoot td{background:#fff4e6!important;font-weight:800;border-top:2px solid var(--naranja)}
 </style>
 </head>
 <body>
 <header><h1>🚦 Conteo de Movilidad</h1><span class="pill" id="net">●</span></header>
 <main>
 <div id="toast"></div>
+<nav class="tabs"><button class="tab on" data-v="vConteo">📋 Conteo</button><button class="tab" data-v="vAnalisis">📊 Análisis</button></nav>
+<div id="vConteo">
 
 <!-- PANTALLA 1: configuración -->
 <section id="setup" class="card">
@@ -149,6 +170,26 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
   </div>
   <div class="status" id="exst"></div>
 </section>
+</div><!-- /vConteo -->
+
+<div id="vAnalisis" class="hide">
+  <section class="card">
+    <b>📊 Análisis de datos</b>
+    <div class="filtros">
+      <div><label>Día</label><select id="fDia"></select></div>
+      <div><label>Sector</label><select id="fSector"></select></div>
+      <div><label>Punto</label><select id="fPunto"></select></div>
+      <div><label>Elemento</label><select id="fElem"></select></div>
+    </div>
+    <div class="bar"><button class="btn naranja" id="anAct">🔄 Actualizar datos</button><button class="btn gris" id="anCsv">⬇ Tabla filtrada (CSV)</button></div>
+    <div class="status" id="anSt"></div>
+  </section>
+  <section class="kpis" id="kpis"></section>
+  <section class="card"><b>Registros por hora (7:00 a 20:00) y elemento</b><div class="cv"><canvas id="chHora"></canvas></div></section>
+  <section class="card"><b>Distribución por elemento</b><div class="cv"><canvas id="chElem"></canvas></div></section>
+  <section class="card"><b>Total por punto</b><div class="cv"><canvas id="chPunto"></canvas></div></section>
+  <section class="card"><b>Tabla desagregada por hora</b><div style="overflow-x:auto;margin-top:8px" id="tabla"></div></section>
+</div>
 </main>
 
 <script>
@@ -401,6 +442,96 @@ $("#xlsx").onclick = async () => {
   XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(r.res),"Resumen por hora");
   XLSX.writeFile(wb,`conteo_movilidad_${r.tag}.xlsx`); toast("✔ Excel descargado","ok");
 };
+
+/* ---------- Análisis ---------- */
+const H0=7, H1=19;                       // bloques 07:00–07:59 ... 19:00–19:59 (7am a 8pm)
+const HORAS=Array.from({length:H1-H0+1},(_,i)=>H0+i);
+const hlab = h => String(h).padStart(2,"0")+":00";
+const hrango = h => hlab(h)+" - "+String(h).padStart(2,"0")+":59";
+const ELEMS=["Automóvil","Motocicleta","Camión urbano","Camión de carga","Peatón hombre","Peatón mujer","Bicicleta"];
+const ECOL=["#0b4f8a","#4aa3e0","#f28c28","#a84d09","#2e9e5b","#8fd9a8","#c8d93a"];
+const SECTORES=["Poniente","Norte","Oriente","Sur"];
+const AN={rows:[],pts:{},cargado:false}; const CH={};
+
+function calc(f){
+  const m=HORAS.map(()=>ELEMS.map(()=>0)); let fuera=0;
+  const porElem=ELEMS.map(()=>0), porPunto={};
+  f.forEach(r=>{
+    const hi=r.h-H0, ei=ELEMS.indexOf(r.elem);
+    if(hi<0||hi>=HORAS.length||ei<0){ fuera++; return; }
+    m[hi][ei]++; porElem[ei]++; porPunto[r.punto]=(porPunto[r.punto]||0)+1;
+  });
+  const totHora=m.map(a=>a.reduce((x,y)=>x+y,0)), total=totHora.reduce((x,y)=>x+y,0);
+  const pico=totHora.indexOf(Math.max(...totHora));
+  return {m,fuera,porElem,porPunto,totHora,total,pico};
+}
+function filtrar(){
+  const d=$("#fDia").value, s=$("#fSector").value, p=$("#fPunto").value, e=$("#fElem").value;
+  return AN.rows.filter(r=>(d==="Todos"||r.fecha===d)&&(s==="Todos"||r.sector===s)&&(p==="Todos"||r.punto===p)&&(e==="Todos"||r.elem===e));
+}
+function llenar(id,items,conservar){
+  const el=$("#"+id), prev=conservar?el.value:null;
+  el.innerHTML=items.map(([v,l])=>`<option value="${v}">${l}</option>`).join("");
+  if(prev && items.some(i=>i[0]===prev)) el.value=prev;
+}
+function llenarPuntos(){
+  const s=$("#fSector").value;
+  const pts=Object.values(AN.pts).filter(x=>s==="Todos"||x.sector===s).map(x=>x.punto).sort();
+  llenar("fPunto",[["Todos","Todos"],...pts.map(x=>[x,x])],true);
+}
+function llenarFiltros(){
+  const dias=[...new Set(AN.rows.map(r=>r.fecha))].sort().reverse();
+  llenar("fDia",[["Todos","Todos"],...dias.map(d=>[d,`${d} (${diaSemana(d)})`])],true);
+  llenar("fSector",[["Todos","Todos"],...SECTORES.map(x=>[x,x])],true);
+  llenar("fElem",[["Todos","Todos"],...ELEMS.map(x=>[x,x])],true);
+  llenarPuntos();
+}
+async function cargarAnalisis(){
+  $("#anSt").textContent="Cargando datos…"; if(pending.length) await flush();
+  const {data:pts,error:e0}=await db.from("puntos_movilidad").select("punto,sector,latitud,longitud");
+  if(e0){ $("#anSt").textContent="Error: "+e0.message; return; }
+  AN.pts=Object.fromEntries(pts.map(x=>[x.punto,x]));
+  let all=[],from=0;
+  while(true){
+    const {data,error}=await db.from("conteos_movilidad").select("id,created_at,fecha,cuadrante,punto,categoria,genero").order("id").range(from,from+999);
+    if(error){ $("#anSt").textContent="Error: "+error.message; return; }
+    all=all.concat(data); if(data.length<1000) break; from+=1000;
+  }
+  AN.rows=all.map(r=>({fecha:r.fecha,h:new Date(r.created_at).getHours(),punto:r.punto,sector:(AN.pts[r.punto]||{}).sector||r.cuadrante,elem:elemento(r)}));
+  AN.cargado=true; llenarFiltros(); render();
+}
+function grafica(id,cfg){ if(CH[id]) CH[id].destroy(); CH[id]=new Chart($("#"+id),cfg); }
+function render(){
+  const f=filtrar(), c=calc(f);
+  $("#anSt").textContent=`${AN.rows.length} registros en la base · ${f.length} con los filtros`+(c.fuera?` · ${c.fuera} fuera de 7:00–20:00 (no graficados)`:"")+".";
+  const veh=c.porElem[0]+c.porElem[1]+c.porElem[2]+c.porElem[3], ped=c.porElem[4]+c.porElem[5];
+  $("#kpis").innerHTML=[["a",c.total,"Total"],["a",veh,"Vehículos"],["v",ped,"Peatones"],["v",c.porElem[6],"Bicicletas"],["n",c.total?hlab(c.pico):"–","Hora pico"],["n",c.total?c.totHora[c.pico]:0,"Registros en pico"]]
+    .map(k=>`<div class="kpi ${k[0]}"><b>${k[1]}</b><span>${k[2]}</span></div>`).join("");
+  const common={responsive:true,maintainAspectRatio:false,plugins:{legend:{position:"bottom",labels:{boxWidth:12}}}};
+  grafica("chHora",{type:"bar",data:{labels:HORAS.map(hlab),datasets:ELEMS.map((e,i)=>({label:e,data:c.m.map(r=>r[i]),backgroundColor:ECOL[i],borderRadius:3}))},
+    options:{...common,scales:{x:{stacked:true,title:{display:true,text:"Hora del día"}},y:{stacked:true,beginAtZero:true,ticks:{precision:0},title:{display:true,text:"Registros"}}}}});
+  grafica("chElem",{type:"doughnut",data:{labels:ELEMS,datasets:[{data:c.porElem,backgroundColor:ECOL,borderColor:"#fff",borderWidth:2}]},options:common});
+  const pk=Object.keys(c.porPunto).sort((a,b)=>c.porPunto[b]-c.porPunto[a]);
+  grafica("chPunto",{type:"bar",data:{labels:pk,datasets:[{label:"Registros",data:pk.map(k=>c.porPunto[k]),backgroundColor:pk.map(k=>COL[(AN.pts[k]||{}).sector]||"#0b4f8a"),borderRadius:4}]},
+    options:{...common,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,ticks:{precision:0}}}}});
+  $("#tabla").innerHTML=`<table class="tbl"><thead><tr><th>Hora</th>${ELEMS.map(e=>`<th>${e}</th>`).join("")}<th>Total</th></tr></thead><tbody>`+
+    HORAS.map((h,i)=>`<tr><td>${hrango(h)}</td>${c.m[i].map(v=>`<td>${v}</td>`).join("")}<td><b>${c.totHora[i]}</b></td></tr>`).join("")+
+    `</tbody><tfoot><tr><td>Total</td>${c.porElem.map(v=>`<td>${v}</td>`).join("")}<td>${c.total}</td></tr></tfoot></table>`;
+}
+["fDia","fSector","fElem","fPunto"].forEach(id=>$("#"+id).addEventListener("change",()=>{ if(id==="fSector") llenarPuntos(); render(); }));
+$("#anAct").onclick=async()=>{ await cargarAnalisis(); toast("✔ Datos actualizados","ok"); };
+$("#anCsv").onclick=()=>{
+  const c=calc(filtrar());
+  const rows=HORAS.map((h,i)=>({"Bloque horario":hrango(h),...Object.fromEntries(ELEMS.map((e,j)=>[e,c.m[i][j]])),"Total":c.totHora[i]}));
+  rows.push({"Bloque horario":"Total",...Object.fromEntries(ELEMS.map((e,j)=>[e,c.porElem[j]])),"Total":c.total});
+  descargar(aCSV(rows),"conteo_movilidad_analisis.csv"); toast("✔ Tabla descargada","ok");
+};
+document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
+  document.querySelectorAll(".tab").forEach(x=>x.classList.toggle("on",x===t));
+  ["vConteo","vAnalisis"].forEach(v=>$("#"+v).classList.toggle("hide",v!==t.dataset.v));
+  if(t.dataset.v==="vAnalisis"){ if(!AN.cargado) cargarAnalisis(); else render(); }
+  else setTimeout(()=>map.invalidateSize(),50);
+});
 </script>
 </body>
 </html>
