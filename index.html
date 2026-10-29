@@ -89,8 +89,8 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
 <section id="setup" class="card">
   <div class="aviso"><b>Antes de empezar</b>
     <ol><li>Toca <b>Sincronizar</b> y espera el mensaje verde ✔ (0 pendientes).</li>
-    <li>Elige cuadrante, punto, tipos de elemento y día de captura.</li>
-    <li>Toca <b>Iniciar conteo</b>. Un toque = un registro; usa <i>Deshacer</i> si te equivocas.</li></ol>
+    <li>Escribe tu nombre (Brigadista) y elige cuadrante y punto.</li>
+    <li>Toca <b>Iniciar conteo</b>: tus contadores arrancan en 0 y cada toque guarda un registro. Usa <i>Deshacer</i> si te equivocas.</li></ol>
     <button class="btn naranja" id="sync" style="width:100%">🔄 Sincronizar</button>
     <div class="status" id="sync-st"></div>
   </div>
@@ -104,7 +104,7 @@ input,select{width:100%;padding:12px;border:2px solid #cfe0ee;border-radius:10px
   </div>
   <div class="row2">
     <div><label>Día de la captura (hoy)</label><input type="date" id="fecha" disabled></div>
-    <div><label>Aforador (opcional)</label><input type="text" id="aforador" placeholder="Nombre"></div>
+    <div><label>Nombre del Brigadista <span style="color:#d9650f">*</span></label><input type="text" id="aforador" placeholder="Obligatorio" autocomplete="name" maxlength="60"></div>
   </div>
   <div class="bar"><button class="btn verde" id="go" disabled>Iniciar conteo</button></div>
   <div class="bar"><button class="btn gris" id="exp1">⬇ Exportar datos</button></div>
@@ -180,6 +180,9 @@ let pending = JSON.parse(localStorage.getItem("pending") || "[]");
 /* ---------- Configuración ---------- */
 $("#fecha").value = hoy(); $("#fecha").disabled = true;
 $("#aforador").value = sel.aforador || "";
+const nombreOk = () => $("#aforador").value.trim().length >= 2;
+function actualizarGo(){ $("#go").disabled = !(sel.punto && nombreOk()); $("#aforador").style.borderColor = nombreOk() ? "#cfe0ee" : "#f28c28"; }
+$("#aforador").addEventListener("input", actualizarGo);
 function drawCuads(){
   $("#cuads").innerHTML = Object.keys(CUADS).map(c=>`<button class="chip ${sel.cuadrante===c?"on":""}" data-c="${c}">${c}</button>`).join("");
   $("#cuads").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.cuadrante=b.dataset.c;sel.punto=null;drawCuads();drawPuntos()});
@@ -187,13 +190,13 @@ function drawCuads(){
 function drawPuntos(){
   const p = sel.cuadrante ? CUADS[sel.cuadrante] : null;
   $("#puntos").innerHTML = p ? [1,2,3,4,5].map(n=>`<button class="chip ${sel.punto===p+n?"on":""}" data-p="${p+n}">${p+n}</button>`).join("") : "<small>Selecciona un cuadrante</small>";
-  $("#puntos").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.punto=b.dataset.p;drawPuntos();$("#go").disabled=false});
-  $("#go").disabled = !(sel.punto && sel.tipos.length);
+  $("#puntos").querySelectorAll("button").forEach(b=>b.onclick=()=>{sel.punto=b.dataset.p;drawPuntos()});
+  actualizarGo();
   if(window.resaltar) resaltar();
 }
 function drawTipos(){
   $("#tipos").innerHTML = BOTONES.filter(b=>b.k).map(b=>`<button class="tipo ${sel.tipos.includes(b.k)?"on":""}" data-k="${b.k}">${b.i} ${b.gen?"Peatón "+b.t:b.t}</button>`).join("");
-  $("#tipos").querySelectorAll("button").forEach(el=>el.onclick=()=>{const k=el.dataset.k;sel.tipos=sel.tipos.includes(k)?sel.tipos.filter(x=>x!==k):[...sel.tipos,k];drawTipos();$("#go").disabled=!(sel.punto&&sel.tipos.length)});
+  $("#tipos").querySelectorAll("button").forEach(el=>el.onclick=()=>{const k=el.dataset.k;sel.tipos=sel.tipos.includes(k)?sel.tipos.filter(x=>x!==k):[...sel.tipos,k];drawTipos();actualizarGo()});
 }
 drawTipos();
 drawCuads(); drawPuntos();
@@ -210,14 +213,15 @@ $("#sync").onclick = async () => {
 };
 $("#go").onclick = async () => {
   if(pending.length){ const ok=await flush(); if(!ok) return alert("Hay registros pendientes sin sincronizar. Toca Sincronizar con conexión a internet antes de empezar."); }
+  if(!nombreOk()){ $("#aforador").focus(); return alert("Escribe el nombre del Brigadista para iniciar el conteo."); }
   sel.fecha = hoy(); $("#fecha").value = sel.fecha; sel.aforador = $("#aforador").value.trim();
   if(!sel.fecha) return alert("Selecciona el día de la captura");
   localStorage.setItem("sel", JSON.stringify(sel));
   $("#setup").classList.add("hide"); $("#count").classList.remove("hide");
   $("#lbl").textContent = `${sel.cuadrante} · ${sel.punto}`;
-  $("#lblf").textContent = new Date(sel.fecha+"T12:00").toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"});
+  $("#lblf").textContent = new Date(sel.fecha+"T12:00").toLocaleDateString("es-MX",{weekday:"long",day:"numeric",month:"long",year:"numeric"}) + " · Brigadista: " + sel.aforador;
   history = []; counts = {};
-  drawBotones(); await cargarConteos(); flush();
+  drawBotones(); pintar(); flush(); // contadores en 0 solo en pantalla; la base de datos no se modifica
 };
 function drawBotones(){
   const act = BOTONES.filter(b=>b.k && sel.tipos.includes(b.k));
@@ -330,7 +334,7 @@ function detalle(rows,P){
     return {"Fecha":r.fecha,"Día de la semana":diaSemana(r.fecha),"Hora":loc.slice(11,19),"Bloque horario":loc.slice(11,13)+":00",
       "Sector":p.sector||r.cuadrante,"Punto":r.punto,"Latitud":p.latitud??"","Longitud":p.longitud??"",
       "Clase":CLASE_ES[r.clase]||r.clase,"Tipo":CAT_ES[r.categoria]||r.categoria,"Género":r.genero?(r.genero==="mujer"?"Mujer":"Hombre"):"",
-      "Elemento":elemento(r),"Cantidad":1,"Aforador":r.aforador||"","ID registro":r.id};
+      "Elemento":elemento(r),"Cantidad":1,"Brigadista":r.aforador||"","ID registro":r.id};
   });
   out.sort((a,b)=>a.Fecha.localeCompare(b.Fecha)||a.Punto.localeCompare(b.Punto)||a.Hora.localeCompare(b.Hora));
   return out.map((o,i)=>({"No.":i+1,...o}));
